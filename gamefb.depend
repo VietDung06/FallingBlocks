@@ -1,0 +1,13 @@
+# depslib dependency file v1.0
+1747333449 source:c:\users\hi\downloads\gamefb\main.cpp
+	<SDL.h>
+	<SDL_image.h>
+	<SDL_mixer.h>
+	<iostream>
+	<vector>
+	<cstdlib>
+	<ctime>
+	<string>
+	<fstream>
+	<algorithm>
+
