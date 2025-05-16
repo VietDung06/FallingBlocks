@@ -1,6 +1,7 @@
 #include <SDL.h>
 #include <SDL_image.h>
 #include <SDL_mixer.h>
+#include <SDL_ttf.h>
 #include <iostream>
 #include <vector>
 #include <cstdlib>
@@ -21,14 +22,19 @@ int MAX_BLOCKS = 20;
 int timeSinceStart = 0;
 int lastSpeedUpTime = 0;
 int speedUpCount = 0;
+int survivalTime = 0;
+int bestSurvivalTime = 0;
+bool isNewRecord = false;
+Uint32 recordTimerStart = 0;
+const Uint32 recordAnimDuration = 3000;
 
 bool showPlayer = true;
 SDL_Texture* gameOverTexture = nullptr;
 SDL_Texture* menuTexture = nullptr;
-SDL_Texture* scoreBoardTexture = nullptr;
 enum GameState { MENU, PLAYING, PAUSED, GAME_OVER };
 GameState gameState = MENU;
 
+TTF_Font* font = nullptr;
 SDL_Window* window = nullptr;
 SDL_Renderer* renderer = nullptr;
 SDL_Texture* player_stand_left = nullptr;
@@ -43,6 +49,7 @@ SDL_Texture* playerTexture = nullptr;
 SDL_Texture* background = nullptr;
 SDL_Texture* blockTexture = nullptr;
 SDL_Texture* heartTexture = nullptr;
+SDL_Texture* heartEmptyTexture = nullptr;
 SDL_Texture* levelUpBanner = nullptr;
 SDL_Texture* currentPlayerTexture = nullptr;
 Mix_Chunk* jumpSound = nullptr;
@@ -57,6 +64,9 @@ bool showLevelUp = false;
 int frame = 0;
 int frameDelay = 4;
 int currentRunFrame = 0;
+int maxPlayerHeight = SCREEN_HEIGHT;
+int cameraY = 0;
+
 
 struct Player {
     int x, y, w, h;
@@ -83,11 +93,19 @@ struct Block {
 std::vector<Block> blocks;
 bool gameOver = false;
 int score = 0;
-int survivalTime = 0;
 bool isGameStarted = false;
-std::vector<int> highScores;
 
 bool initSDL() {
+
+    if (TTF_Init() == -1) {
+    std::cout << "Failed to initialize SDL_ttf: " << TTF_GetError() << std::endl;
+    return false;
+    }
+    font = TTF_OpenFont("arial.ttf", 24);
+    if (!font) {
+    std::cout << "Failed to load font: " << TTF_GetError() << std::endl;
+    return false;
+    }
     if (!(IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG)) return false;
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) return false;
     window = SDL_CreateWindow("Falling Blocks Survival", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN);
@@ -106,6 +124,49 @@ SDL_Texture* loadTexture(const char* path) {
     return texture;
 }
 
+SDL_Texture* renderText(const std::string& message, SDL_Color color) {
+    SDL_Surface* textSurface = TTF_RenderText_Blended(font, message.c_str(), color);
+    if (!textSurface) {
+        std::cout << "TTF_RenderText Error: " << TTF_GetError() << std::endl;
+        return nullptr;
+    }
+
+    SDL_Texture* textTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
+    SDL_FreeSurface(textSurface);
+    return textTexture;
+}
+
+void renderSurvivalTimes() {
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Color currentColor = white;
+
+    if (isNewRecord) {
+        Uint32 elapsed = SDL_GetTicks() - recordTimerStart;
+        int alpha = (SDL_GetTicks() / 300) % 2 == 0 ? 255 : 100;
+        currentColor = {255, 255, 0, (Uint8)alpha}; // vàng nhấp nháy
+    }
+
+    std::string survivalStr = "Survival Time: " + std::to_string(survivalTime / 60) + "s";
+    std::string bestStr = "Best Time: " + std::to_string(bestSurvivalTime / 60) + "s";
+
+    SDL_Texture* survivalTexture = renderText(survivalStr, currentColor);
+    SDL_Texture* bestTexture = renderText(bestStr, currentColor);
+
+    if (survivalTexture && bestTexture) {
+        SDL_Rect survivalRect = {10, 10, 0, 0};
+        SDL_Rect bestRect = {10, 40, 0, 0};
+
+        SDL_QueryTexture(survivalTexture, nullptr, nullptr, &survivalRect.w, &survivalRect.h);
+        SDL_QueryTexture(bestTexture, nullptr, nullptr, &bestRect.w, &bestRect.h);
+
+        SDL_RenderCopy(renderer, survivalTexture, nullptr, &survivalRect);
+        SDL_RenderCopy(renderer, bestTexture, nullptr, &bestRect);
+
+        SDL_DestroyTexture(survivalTexture);
+        SDL_DestroyTexture(bestTexture);
+    }
+}
+
 Mix_Chunk* loadSound(const char* path) {
     return Mix_LoadWAV(path);
 }
@@ -117,7 +178,6 @@ Mix_Music* loadMusic(const char* path) {
 void loadMedia() {
     menuTexture = loadTexture("menu.png");
     gameOverTexture = loadTexture("gameover.png");
-    scoreBoardTexture = loadTexture("scoreBoardTexture.png");
     player_stand_left      = loadTexture("player_stand_left.png");
     player_stand_right     = loadTexture("player_stand_right.png");
     player_jump_left       = loadTexture("player_jump_left.png");
@@ -129,6 +189,7 @@ void loadMedia() {
     background = loadTexture("background.png");
     blockTexture = loadTexture("block.png");
     heartTexture = loadTexture("heart.png");
+    heartEmptyTexture = loadTexture("heart_empty.png");
     levelUpBanner = loadTexture("levelup.png");
     jumpSound = loadSound("jump.wav");
     hitSound = loadSound("hit.wav");
@@ -138,27 +199,17 @@ void loadMedia() {
     Mix_PlayMusic(backgroundMusic, -1);
 }
 
-void loadHighScores() {
-    std::ifstream file("highscores.txt");
-    int score;
-    while (file >> score) {
-        highScores.push_back(score);
-    }
-}
-
-void saveHighScores() {
-    std::ofstream file("highscores.txt");
-    for (int score : highScores) {
-        file << score << std::endl;
-    }
-}
 void spawnBlock() {
-    if ((int)blocks.size() >= MAX_BLOCKS) return;
+      int numColumns = SCREEN_WIDTH / BLOCK_WIDTH;
+
+    // Chọn vị trí cột ngẫu nhiên
+    int col = rand() % numColumns;
+
     Block newBlock;
     newBlock.w = BLOCK_WIDTH;
     newBlock.h = BLOCK_HEIGHT;
-    newBlock.x = (rand() % (SCREEN_WIDTH / BLOCK_WIDTH)) * BLOCK_WIDTH;
-    newBlock.y = -BLOCK_HEIGHT;
+    newBlock.x = col * BLOCK_WIDTH;
+    newBlock.y = -BLOCK_HEIGHT; // bắt đầu rơi từ trên màn hình
     newBlock.isLanded = false;
     blocks.push_back(newBlock);
 }
@@ -204,19 +255,50 @@ void handleEvents(bool& running) {
         } else if (e.type == SDL_KEYDOWN) {
             if (gameState == MENU) {
                 if (e.key.keysym.sym == SDLK_SPACE) {
-                    // Bấm space khi ở menu để bắt đầu chơi
-                    resetGame();        // Reset trạng thái game
-                    gameState = PLAYING; // Chuyển trạng thái sang chơi
+                    resetGame();
+                    gameState = PLAYING;
                 }
             } else if (gameState == PLAYING) {
-                // Các phím điều khiển game khi đang chơi
                 if (e.key.keysym.sym == SDLK_LEFT) player.velocityX = -PLAYER_SPEED;
                 if (e.key.keysym.sym == SDLK_RIGHT) player.velocityX = PLAYER_SPEED;
-                if (e.key.keysym.sym == SDLK_SPACE && !player.isJumping) {
-                    player.velocityY = -20;
-                    player.isJumping = true;
-                    Mix_PlayChannel(-1, jumpSound, 0);
+
+                if (e.key.keysym.sym == SDLK_UP) {
+                    // Nhảy khi chưa nhảy
+                    if (!player.isJumping) {
+                        player.velocityY = -20;
+                        player.isJumping = true;
+                        Mix_PlayChannel(-1, jumpSound, 0);
+                    }
                 }
+
+                if (e.key.keysym.sym == SDLK_SPACE) {
+                    // Bám mép khi đang nhảy
+                    if (player.isJumping) {
+                        const int grabRangeX = 10;
+                        const int grabRangeY = 15;
+
+                        for (const auto& block : blocks) {
+                            bool nearLeftEdge =
+                                abs((player.x + player.w) - block.x) <= grabRangeX &&
+                                player.y + player.h > block.y &&
+                                player.y < block.y + grabRangeY;
+
+                            bool nearRightEdge =
+                                abs(player.x - (block.x + block.w)) <= grabRangeX &&
+                                player.y + player.h > block.y &&
+                                player.y < block.y + grabRangeY;
+
+                            if (nearLeftEdge || nearRightEdge) {
+                                player.y = block.y - player.h;
+                                player.velocityY = 0;
+                                player.isJumping = false;
+                                Mix_PlayChannel(-1, jumpSound, 0);
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 if (e.key.keysym.sym == SDLK_p) {
                     gameState = PAUSED;
                 }
@@ -231,7 +313,6 @@ void handleEvents(bool& running) {
                 }
             }
 
-            // Thoát game khi nhấn ESC
             if (e.key.keysym.sym == SDLK_ESCAPE) {
                 running = false;
             }
@@ -280,12 +361,13 @@ void update() {
         }
     }
 
-    score++;
-    survivalTime++;
 
     player.velocityY += GRAVITY;
     player.y += player.velocityY;
     player.x += player.velocityX;
+    if (player.y < maxPlayerHeight) {
+    maxPlayerHeight = player.y;
+}
 
     if (player.y >= SCREEN_HEIGHT - player.h - 100) {
         player.y = SCREEN_HEIGHT - player.h - 100;
@@ -297,39 +379,58 @@ void update() {
     bool currentlyOnBlock = false;
     bool crushed = false;
 
-    for (auto& block : blocks) {
-        if (!block.isLanded) {
-            block.y += BLOCK_FALL_SPEED;
-            for (auto& other : blocks) {
-                if (&block != &other && block.y + block.h >= other.y && block.y < other.y && block.x == other.x) {
-                    block.y = other.y - block.h;
-                    block.isLanded = true;
-                    break;
-                }
-            }
-            if (block.y + block.h >= SCREEN_HEIGHT - 100) {
-                block.y = SCREEN_HEIGHT - 100 - block.h;
+    for (auto it = blocks.begin(); it != blocks.end(); ) {
+    Block& block = *it;
+
+    const int BLOCK_DELETE_BUFFER = 800;
+    if (block.y > maxPlayerHeight + BLOCK_DELETE_BUFFER) {
+        it = blocks.erase(it);
+        continue;
+    }
+
+    if (!block.isLanded) {
+        block.y += BLOCK_FALL_SPEED;
+        for (auto& other : blocks) {
+            if (&block != &other && block.y + block.h >= other.y && block.y < other.y && block.x == other.x) {
+                block.y = other.y - block.h;
                 block.isLanded = true;
+                break;
             }
         }
-
-        if (player.y + player.h > block.y && player.y + player.h - player.velocityY <= block.y &&
-            player.x + player.w > block.x && player.x < block.x + block.w) {
-            player.y = block.y - player.h;
-            player.velocityY = 0;
-            player.isJumping = false;
-            currentlyOnBlock = true;
+        if (block.y + block.h >= SCREEN_HEIGHT - 100) {
+            block.y = SCREEN_HEIGHT - 100 - block.h;
+            block.isLanded = true;
         }
+    }
 
-        if (player.x + player.w > block.x && player.x < block.x + block.w &&
-            player.y < block.y + block.h && player.y + player.h > block.y) {
-            if (player.velocityX > 0) {
-                player.x = block.x - player.w;
-            } else if (player.velocityX < 0) {
-                player.x = block.x + block.w;
-            }
+    // va chạm platform
+    if (player.y + player.h > block.y && player.y + player.h - player.velocityY <= block.y &&
+        player.x + player.w > block.x && player.x < block.x + block.w) {
+        player.y = block.y - player.h;
+        player.velocityY = 0;
+        player.isJumping = false;
+        currentlyOnBlock = true;
+    }
+
+    // va chạm bên trái/phải
+    if (player.x + player.w > block.x && player.x < block.x + block.w &&
+        player.y < block.y + block.h && player.y + player.h > block.y) {
+        if (player.velocityX > 0) {
+            player.x = block.x - player.w;
+        } else if (player.velocityX < 0) {
+            player.x = block.x + block.w;
         }
-   }
+    }
+
+    // bị đè nếu block đang rơi trúng đầu
+    if (!block.isLanded &&
+        player.y + player.h > block.y && player.y < block.y + block.h &&
+        player.x + player.w > block.x && player.x < block.x + block.w) {
+        crushed = true;
+    }
+
+    ++it;
+}
 
     if (crushed && !player.wasCrushed) {
         player.lives--;
@@ -339,12 +440,7 @@ void update() {
             Mix_PlayChannel(-1, gameOverSound, 0);
             Mix_HaltMusic();
             gameOver = true;
-            if (highScores.size() < 5 || score > highScores.back()) {
-                highScores.push_back(score);
-                std::sort(highScores.rbegin(), highScores.rend());
-                if (highScores.size() > 5) highScores.pop_back();
-                saveHighScores();
-            }
+
         } else {
             player.pauseAfterHit = true;
             player.pauseStartTime = SDL_GetTicks();
@@ -365,6 +461,31 @@ void update() {
     }
 
     if (rand() % 100 < 3) spawnBlock();
+
+const int cameraThreshold = BLOCK_HEIGHT * 4; // 4 block
+
+if (player.y < cameraY + cameraThreshold) {
+    cameraY = player.y - cameraThreshold;
+
+    // Không để cameraY âm
+    if (cameraY < 0) cameraY = 0;
+}
+
+    survivalTime++;
+
+if (survivalTime > bestSurvivalTime) {
+    if (!isNewRecord) {
+        isNewRecord = true;
+        recordTimerStart = SDL_GetTicks();
+    }
+    bestSurvivalTime = survivalTime;
+} else if (isNewRecord) {
+    // Kiểm tra xem animation đã hết chưa
+    if (SDL_GetTicks() - recordTimerStart > recordAnimDuration) {
+        isNewRecord = false;  // hết animation
+    }
+}
+
 }
 
 void render() {
@@ -378,13 +499,22 @@ void render() {
         if (gameOverTexture) {
             SDL_RenderCopy(renderer, gameOverTexture, nullptr, nullptr);
         }
-        if (scoreBoardTexture) {
-            SDL_Rect scoreRect = {SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2, 200, 50};
-            SDL_RenderCopy(renderer, scoreBoardTexture, nullptr, &scoreRect);
-        }
     } else {
+        // Vẽ background
         if (background) SDL_RenderCopy(renderer, background, nullptr, nullptr);
 
+        // Vẽ các block (phải trừ cameraY để cuộn theo nhân vật)
+        for (const auto& block : blocks) {
+            SDL_Rect rect = {
+                block.x,
+                block.y - cameraY, // trừ cameraY để cuộn
+                block.w,
+                block.h
+            };
+            SDL_RenderCopy(renderer, blockTexture, nullptr, &rect);
+        }
+
+        // Hiệu ứng đếm ngược sau khi bị đè
         if (player.pauseAfterHit) {
             Uint32 elapsed = SDL_GetTicks() - player.pauseStartTime;
             int second = 3 - elapsed / 1000;
@@ -394,24 +524,42 @@ void render() {
             }
         }
 
+        // Vẽ nhân vật
         if (showPlayer && currentPlayerTexture) {
-            SDL_Rect playerRect = { player.x, player.y, player.w, player.h };
+            SDL_Rect playerRect = {
+                player.x,
+                player.y - cameraY, // trừ cameraY để cuộn
+                player.w,
+                player.h
+            };
             SDL_RenderCopy(renderer, currentPlayerTexture, nullptr, &playerRect);
         }
 
-        for (const auto& block : blocks) {
-            SDL_Rect rect = { block.x, block.y, block.w, block.h };
-            SDL_RenderCopy(renderer, blockTexture, nullptr, &rect);
+        // Hiển thị trái tim mạng sống (HUD — không trừ cameraY)
+        const int MAX_LIVES = 3;
+        int heartSize = 32;
+        int padding = 10;
+
+        for (int i = 0; i < MAX_LIVES; ++i) {
+            SDL_Texture* currentHeart = (i < player.lives) ? heartTexture : heartEmptyTexture;
+
+            SDL_Rect heartRect = {
+                SCREEN_WIDTH - (MAX_LIVES - i) * (heartSize + padding),
+                10,
+                heartSize,
+                heartSize
+            };
+
+            SDL_RenderCopy(renderer, currentHeart, nullptr, &heartRect);
         }
 
-        if (scoreBoardTexture) {
-            SDL_Rect scoreRect = {10, 10, 100, 50};
-            SDL_RenderCopy(renderer, scoreBoardTexture, nullptr, &scoreRect);
-        }
+        // Hiển thị chữ: thời gian sinh tồn, kỷ lục,...
+        renderSurvivalTimes();
     }
 
     SDL_RenderPresent(renderer);
 }
+
 
 void cleanUp() {
     SDL_DestroyTexture(playerTexture);
@@ -431,7 +579,6 @@ int main(int argc, char* argv[]) {
     srand(static_cast<unsigned int>(time(0)));
     if (!initSDL()) return -1;
     loadMedia();
-    loadHighScores();
     player = {100, SCREEN_HEIGHT - 150, 50, 50, 0, 0, false, 3, false, 0, false, false};
     bool running = true;
     while (running) {
