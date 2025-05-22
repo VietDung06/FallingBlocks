@@ -1,21 +1,8 @@
-Tự làm những phần nào, phần nào lấy từ các kiểu tutorial/code mẫu        vừa làm vừa kết hợp chat gpt tối ưu và sửa
-Liệt kê các nguồn tham khảo (code, hình ảnh, âm thanh...)   CHAT GPT
-Dùng các lệnh vẽ hình      CÓ
-Texture          CÓ
-Background     CÓ
-Event bàn phím      CÓ
-Event chuột          CÓ
-Animation (hoạt hình)          CÓ
-Xử lý va chạm          CÓ
-Score (có tính điểm)           CÓ
-Lưu bảng điểm          CÓ
-Sound        CÓ
-Sound on off         CÓ
-Background music       CÓ
-Font     CÓ
-Menu      CÓ
-Pause/Resume     CÓ
-Status bar / lives (mạng/máu...)          CÓ
-Các điểm nổi bật khác     CÓ   
-Code viết dễ đọc (gv đánh giá)
-Hiểu rõ code (gv đánh giá)
+Họ và tên tác giả: Lưu Việt Dũng - 24021430
+Thông tin trò chơi: Falling Blocks - lấy cảm hứng từ tựa game tetris và mario
+- Khi bắt đầu chơi, người chơi sẽ được spawn và có những block rơi từ trên trời xuống, người chơi sẽ phải né block và sinh tồn càng lâu càng tốt
+- Thời gian sinh tồn càng lâu, số lượng block và tốc độ rơi càng nhanh
+- Người chơi có 3 mạng nếu bị block rơi trúng, khi bị rơi trúng thì đồng hồ sẽ đếm ngược 3s sau đó xóa hết block chưa chạm đất, người chơi sẽ tiếp tục trò chơi
+- Khi đồng hồ đên giây thứ 20 sẽ xuất hiện lava gây ăn mòn block nó chạm vào và sẽ làm trò chơi kết thúc ngay lập tức nếu người chơi dẫm phải
+- Có các phần menu, pause, tăng giảm âm thanh để người chơi tương tác
+Em có tham khảo code từ chatgpt, youtube về phần code còn ý tưởng thì do em tự nghĩ
