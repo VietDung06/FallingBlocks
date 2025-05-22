@@ -8,6 +8,5 @@ Thông tin trò chơi: Falling Blocks - lấy cảm hứng từ tựa game tetri
 Ảnh nhân vật và background, menu, pause, game over: Chatgpt
 Âm thanh:https://pixabay.com/vi/sound-effects/search/%C3%A2m%20thanh%20nh%E1%BA%A3y/
 Tham khảo code: ChatGpt và youtube
-Ảnh menu: ![Uploading image.png…]()
-Ảnh game: ![Uploading image.png…]()
+
 
